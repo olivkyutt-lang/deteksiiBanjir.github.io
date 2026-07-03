@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Sistem Monitoring Banjir</title>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<!-- Excel Export -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f7fb;
+  margin: 0;
+}
+
+header {
+  background: linear-gradient(90deg,#1e3c72,#2a5298);
+  color: white;
+  padding: 20px;
+  text-align: center;
+}
+
+.container {
+  padding: 20px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.card {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.card h3 {
+  margin: 5px 0;
+  font-size: 16px;
+}
+
+.value {
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.status {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: bold;
+}
+
+.aman { background:#c8e6c9; color:#2e7d32; }
+.waspada { background:#fff3cd; color:#856404; }
+.bahaya { background:#f8d7da; color:#721c24; }
+
+.section {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.section h2 {
+  margin-top: 0;
+}
+
+.controls {
+  margin-bottom: 10px;
+}
+
+button {
+  padding: 6px 12px;
+  border: none;
+  background: #1e3c72;
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2a5298;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 6px;
+  text-align: center;
+}
+
+th {
+  background: #1e3c72;
+  color: white;
+}
+
+footer {
+  text-align: center;
+  margin-top: 20px;
+  color: #666;
+  font-size: 13px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>🌧️ Sistem Monitoring Banjir</h1>
+  <p>Curah Hujan & Ketinggian Air Sungai (Realtime & Historis)</p>
+</header>
+
+<div class="container">
+
+  <!-- REALTIME -->
+  <div class="cards">
+    <div class="card">
+      <h3>Status</h3>
+      <span id="status" class="status aman">AMAN</span>
+    </div>
+    <div class="card">
+      <h3>Hujan / Menit</h3>
+      <div class="value" id="rain_min">0 mm</div>
+    </div>
+    <div class="card">
+      <h3>Hujan / Jam</h3>
+      <div class="value" id="rain_hour">0 mm</div>
+    </div>
+    <div class="card">
+      <h3>Ketinggian Air</h3>
+      <div class="value" id="water">0 cm</div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="section">
+    <h2>📊 Rekap Curah Hujan Harian</h2>
+
+    <div class="controls">
+      <input type="date" id="tanggal">
+      <button onclick="loadHistory()">Tampilkan</button>
+      <button onclick="exportExcel()">Download Excel</button>
+    </div>
+
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th>Waktu</th>
+          <th>Curah Hujan (mm)</th>
+          <th>Ketinggian Air (cm)</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Sistem Mitigasi Banjir berbasis ESP32 & Firebase
+</footer>
+
+<script>
+/* ================= FIREBASE CONFIG ================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyBva0-B0bEb0v5jZzw1YsQVlvScm0XZlwE",
+  authDomain: "deteksibanjir-b4937.firebaseapp.com",
+  databaseURL: "https://deteksibanjir-b4937-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "deteksibanjir-b4937",
+  storageBucket: "deteksibanjir-b4937.firebasestorage.app",
+  messagingSenderId: "596367848359",
+  appId: "1:596367848359:web:ce8d7d64214615f347bc82",
+  measurementId: "G-Y9G7JTWGP7"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+/* ================= REALTIME ================= */
+db.ref("realtime").on("value", snap => {
+  const d = snap.val();
+  if (!d) return;
+
+  document.getElementById("rain_min").innerText = d.rainfall_minute + " mm";
+  document.getElementById("rain_hour").innerText = d.rainfall_hour + " mm";
+  document.getElementById("water").innerText = d.water_level + " cm";
+
+  const status = document.getElementById("status");
+  status.innerText = d.status;
+  status.className = "status " + d.status.toLowerCase();
+});
+
+document.getElementById("tanggal").value =
+  new Date().toISOString().split("T")[0];
+
+/* ================= HISTORY ================= */
+let excelData = [];
+
+function loadHistory() {
+  const date = document.getElementById("tanggal").value;
+  if (!date) {
+    alert("Tanggal belum dipilih");
+    return;
+  }
+
+  const tbody = document.querySelector("#dataTable tbody");
+  tbody.innerHTML = "";
+  excelData = [];
+
+  db.ref("history/" + date).once("value", snap => {
+    const data = snap.val();
+    if (!data) {
+      alert("Data tidak ditemukan untuk tanggal " + date);
+      return;
+    }
+
+    // sort waktu berdasarkan JAM & MENIT
+    const sortedKeys = Object.keys(data).sort((a, b) => {
+      const [ha, ma] = a.split("-").map(Number);
+      const [hb, mb] = b.split("-").map(Number);
+      return ha !== hb ? ha - hb : ma - mb;
+    });
+
+    sortedKeys.forEach(time => {
+      const d = data[time];
+
+      excelData.push({
+        Waktu: time.replace("-", ":"),
+        Hujan_Jam_mm: d.rain_hour ?? 0,
+        Hujan_Harian_mm: d.rain_day ?? 0,
+        Tinggi_Air_cm: d.water ?? 0,
+        Status: d.status ?? "AMAN"
+      });
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${time.replace("-", ":")}</td>
+        <td>${d.rain_hour ?? 0}</td>
+        <td>${d.water ?? 0}</td>
+        <td>${d.status ?? "AMAN"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  });
+}
+
+
+/* ================= EXPORT EXCEL ================= */
+function exportExcel() {
+  if (excelData.length === 0) {
+    alert("Data kosong");
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(excelData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Rekap Banjir");
+  XLSX.writeFile(wb, "rekap_banjir.xlsx");
+}
+</script>
+
+</body>
+</html>
