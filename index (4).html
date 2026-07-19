@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Sistem Monitoring Banjir</title>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<!-- Excel Export -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f7fb;
+  margin: 0;
+}
+
+header {
+  background: linear-gradient(90deg,#1e3c72,#2a5298);
+  color: white;
+  padding: 20px;
+  text-align: center;
+}
+
+.container {
+  padding: 20px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.card {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  text-align: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+.card h3 {
+  margin: 5px 0;
+  font-size: 16px;
+}
+
+.value {
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.subvalue {
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.status {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: bold;
+}
+
+.aman { background:#c8e6c9; color:#2e7d32; }
+.waspada { background:#fff3cd; color:#856404; }
+.bahaya { background:#f8d7da; color:#721c24; }
+
+.section {
+  background: white;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  margin-bottom: 20px;
+}
+
+.section h2 {
+  margin-top: 0;
+}
+
+.info-box {
+  background: #eef3fb;
+  border-left: 4px solid #2a5298;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #333;
+  margin-bottom: 15px;
+  border-radius: 4px;
+}
+
+.controls {
+  margin-bottom: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+select, input[type="date"] {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+button {
+  padding: 6px 12px;
+  border: none;
+  background: #1e3c72;
+  color: white;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2a5298;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 6px;
+  text-align: center;
+}
+
+th {
+  background: #1e3c72;
+  color: white;
+}
+
+footer {
+  text-align: center;
+  margin-top: 20px;
+  color: #666;
+  font-size: 13px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>🌧️ Sistem Monitoring Banjir</h1>
+  <p>Curah Hujan & Ketinggian Air Sungai (Realtime & Historis)</p>
+</header>
+
+<div class="container">
+
+  <!-- REALTIME -->
+  <div class="cards">
+    <div class="card">
+      <h3>Status</h3>
+      <span id="status" class="status aman">AMAN</span>
+    </div>
+    <div class="card">
+      <h3>Hujan / Menit (saat ini)</h3>
+      <div class="value" id="rain_min">0 mm</div>
+    </div>
+    <div class="card">
+      <h3>Hujan / Jam (total jam terakhir yang selesai)</h3>
+      <div class="value" id="rain_hour">- mm</div>
+      <div class="subvalue" id="rain_hour_label">menunggu jam pertama selesai...</div>
+    </div>
+    <div class="card">
+      <h3>Hujan / Hari (total hari terakhir yang selesai)</h3>
+      <div class="value" id="rain_day">- mm</div>
+      <div class="subvalue" id="rain_day_label">menunggu hari pertama selesai...</div>
+    </div>
+    <div class="card">
+      <h3>Ketinggian Air</h3>
+      <div class="value" id="water">0 cm</div>
+    </div>
+  </div>
+
+  <div class="info-box">
+    ℹ️ Nilai <b>Hujan/Jam</b> dan <b>Hujan/Hari</b> di atas adalah <b>total (penjumlahan)</b> curah hujan per menit
+    dalam periode tersebut — bukan rata-rata. Nilai ini baru berubah setelah jam/hari yang bersangkutan benar-benar
+    selesai (contoh: total jam 19 baru muncul begitu jam 19 sudah lewat, dan akan bertahan sampai jam 20 selesai).
+  </div>
+
+  <!-- HISTORY -->
+  <div class="section">
+    <h2>📊 Rekap Curah Hujan</h2>
+
+    <div class="controls">
+      <input type="date" id="tanggal">
+      <select id="viewMode">
+        <option value="menit">Per Menit</option>
+        <option value="jam">Per Jam</option>
+        <option value="hari">Per Hari</option>
+      </select>
+      <button onclick="loadHistory()">Tampilkan</button>
+      <button onclick="exportExcel()">Download Excel</button>
+    </div>
+
+    <table id="dataTable">
+      <thead id="dataTableHead">
+        <tr>
+          <th>Waktu</th>
+          <th>Curah Hujan (mm)</th>
+          <th>Ketinggian Air (cm)</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+</div>
+
+<footer>
+  Sistem Mitigasi Banjir berbasis ESP32 & Firebase
+</footer>
+
+<script>
+/* ================= FIREBASE CONFIG ================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyBva0-B0bEb0v5jZzw1YsQVlvScm0XZlwE",
+  authDomain: "deteksibanjir-b4937.firebaseapp.com",
+  databaseURL: "https://deteksibanjir-b4937-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "deteksibanjir-b4937",
+  storageBucket: "deteksibanjir-b4937.firebasestorage.app",
+  messagingSenderId: "596367848359",
+  appId: "1:596367848359:web:ce8d7d64214615f347bc82",
+  measurementId: "G-Y9G7JTWGP7"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+/* ================= HELPER ================= */
+function pad2(n) { return n.toString().padStart(2, "0"); }
+
+function dateStr(d) {
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+
+function yesterdayOf(d) {
+  const y = new Date(d);
+  y.setDate(y.getDate() - 1);
+  return y;
+}
+
+// status terburuk di antara beberapa status, dipakai untuk rekap jam/hari
+function worstStatus(list) {
+  const rank = { "BAHAYA": 3, "WASPADA": 2, "AMAN": 1 };
+  let worst = "AMAN";
+  list.forEach(s => {
+    if ((rank[s] || 0) > (rank[worst] || 0)) worst = s;
+  });
+  return worst;
+}
+
+/* ================= REALTIME (menit) ================= */
+db.ref("realtime").on("value", snap => {
+  const d = snap.val();
+  if (!d) return;
+
+  // toleran terhadap dua kemungkinan nama field (rain_min vs rainfall_minute, dst)
+  const rainMin = d.rain_min ?? d.rainfall_minute ?? 0;
+  const waterLevel = d.water ?? d.water_level ?? 0;
+  const status = d.status ?? "AMAN";
+
+  document.getElementById("rain_min").innerText = rainMin + " mm";
+  document.getElementById("water").innerText = waterLevel + " cm";
+
+  const statusEl = document.getElementById("status");
+  statusEl.innerText = status;
+  statusEl.className = "status " + status.toLowerCase();
+});
+
+/* ================= AGREGASI JAM & HARI (hanya update setelah periode selesai) ================= */
+let lastShownHourKey = null;  // format: "YYYY-MM-DD_HH"
+let lastShownDayKey = null;   // format: "YYYY-MM-DD"
+
+async function updateHourlyTotal() {
+  const now = new Date();
+  let targetHour = now.getHours() - 1;
+  let targetDate = new Date(now);
+
+  if (targetHour < 0) {
+    targetHour = 23;
+    targetDate = yesterdayOf(now);
+  }
+
+  const targetDateStr = dateStr(targetDate);
+  const hourKey = targetDateStr + "_" + pad2(targetHour);
+
+  if (hourKey === lastShownHourKey) return; // jam ini sudah ditampilkan, tidak perlu fetch ulang
+
+  const snap = await db.ref("history/" + targetDateStr).once("value");
+  const data = snap.val();
+  if (!data) return; // jam sebelumnya belum ada datanya (misal alat baru nyala)
+
+  let total = 0;
+  const statuses = [];
+  Object.keys(data).forEach(k => {
+    if (k.split("-")[0] === pad2(targetHour)) {
+      total += Number(data[k].rain_min || 0);
+      statuses.push(data[k].status || "AMAN");
+    }
+  });
+
+  document.getElementById("rain_hour").innerText = total.toFixed(1) + " mm";
+  document.getElementById("rain_hour_label").innerText =
+    "Total jam " + pad2(targetHour) + ":00–" + pad2(targetHour) + ":59 (" + targetDateStr + ")";
+
+  lastShownHourKey = hourKey;
+}
+
+async function updateDailyTotal() {
+  const now = new Date();
+  const targetDate = yesterdayOf(now); // hari yang baru saja selesai
+  const targetDateStr = dateStr(targetDate);
+
+  if (targetDateStr === lastShownDayKey) return; // hari ini sudah ditampilkan
+
+  const snap = await db.ref("history/" + targetDateStr).once("value");
+  const data = snap.val();
+  if (!data) return;
+
+  let total = 0;
+  Object.values(data).forEach(d => { total += Number(d.rain_min || 0); });
+
+  document.getElementById("rain_day").innerText = total.toFixed(1) + " mm";
+  document.getElementById("rain_day_label").innerText = "Total tanggal " + targetDateStr;
+
+  lastShownDayKey = targetDateStr;
+}
+
+// cek saat load, lalu cek ulang tiap 60 detik (murah, tidak perlu tiap detik)
+updateHourlyTotal();
+updateDailyTotal();
+setInterval(() => {
+  updateHourlyTotal();
+  updateDailyTotal();
+}, 60000);
+
+document.getElementById("tanggal").value = dateStr(new Date());
+
+/* ================= HISTORY / REKAP ================= */
+let excelData = [];
+
+function loadHistory() {
+  const date = document.getElementById("tanggal").value;
+  const mode = document.getElementById("viewMode").value;
+
+  if (!date) {
+    alert("Tanggal belum dipilih");
+    return;
+  }
+
+  db.ref("history/" + date).once("value", snap => {
+    const data = snap.val();
+    if (!data) {
+      alert("Data tidak ditemukan untuk tanggal " + date);
+      return;
+    }
+
+    if (mode === "menit") renderPerMenit(data, date);
+    else if (mode === "jam") renderPerJam(data, date);
+    else renderPerHari(data, date);
+  });
+}
+
+function setTableHead(cols) {
+  document.getElementById("dataTableHead").innerHTML =
+    "<tr>" + cols.map(c => "<th>" + c + "</th>").join("") + "</tr>";
+}
+
+function renderPerMenit(data, date) {
+  setTableHead(["Waktu", "Curah Hujan / Menit (mm)", "Ketinggian Air (cm)", "Status"]);
+  const tbody = document.querySelector("#dataTable tbody");
+  tbody.innerHTML = "";
+  excelData = [];
+
+  const sortedKeys = Object.keys(data).sort((a, b) => {
+    const [ha, ma] = a.split("-").map(Number);
+    const [hb, mb] = b.split("-").map(Number);
+    return ha !== hb ? ha - hb : ma - mb;
+  });
+
+  sortedKeys.forEach(time => {
+    const d = data[time];
+    const waktu = time.replace("-", ":");
+
+    excelData.push({
+      Tanggal: date,
+      Waktu: waktu,
+      Hujan_Menit_mm: d.rain_min ?? 0,
+      Tinggi_Air_cm: d.water ?? 0,
+      Status: d.status ?? "AMAN"
+    });
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${waktu}</td>
+      <td>${d.rain_min ?? 0}</td>
+      <td>${d.water ?? 0}</td>
+      <td>${d.status ?? "AMAN"}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderPerJam(data, date) {
+  setTableHead(["Jam", "Total Curah Hujan (mm)", "Ketinggian Air Terakhir (cm)", "Status Terburuk"]);
+  const tbody = document.querySelector("#dataTable tbody");
+  tbody.innerHTML = "";
+  excelData = [];
+
+  // kelompokkan per jam, jumlahkan rain_min
+  const buckets = {}; // { "16": { total, lastWater, lastMinute, statuses:[] } }
+
+  const sortedKeys = Object.keys(data).sort((a, b) => {
+    const [ha, ma] = a.split("-").map(Number);
+    const [hb, mb] = b.split("-").map(Number);
+    return ha !== hb ? ha - hb : ma - mb;
+  });
+
+  sortedKeys.forEach(time => {
+    const [h, m] = time.split("-");
+    const d = data[time];
+    if (!buckets[h]) buckets[h] = { total: 0, lastWater: 0, lastMinute: -1, statuses: [] };
+    buckets[h].total += Number(d.rain_min || 0);
+    buckets[h].statuses.push(d.status || "AMAN");
+    if (Number(m) >= buckets[h].lastMinute) {
+      buckets[h].lastMinute = Number(m);
+      buckets[h].lastWater = d.water ?? 0;
+    }
+  });
+
+  Object.keys(buckets).sort((a, b) => Number(a) - Number(b)).forEach(h => {
+    const b = buckets[h];
+    const status = worstStatus(b.statuses);
+    const jamLabel = pad2(Number(h)) + ":00–" + pad2(Number(h)) + ":59";
+
+    excelData.push({
+      Tanggal: date,
+      Jam: jamLabel,
+      Total_Hujan_mm: Number(b.total.toFixed(1)),
+      Tinggi_Air_Terakhir_cm: b.lastWater,
+      Status_Terburuk: status
+    });
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${jamLabel}</td>
+      <td>${b.total.toFixed(1)}</td>
+      <td>${b.lastWater}</td>
+      <td>${status}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderPerHari(data, date) {
+  setTableHead(["Tanggal", "Total Curah Hujan (mm)", "Ketinggian Air Tertinggi (cm)", "Status Terburuk"]);
+  const tbody = document.querySelector("#dataTable tbody");
+  tbody.innerHTML = "";
+  excelData = [];
+
+  let total = 0;
+  let maxWater = 0;
+  const statuses = [];
+
+  Object.values(data).forEach(d => {
+    total += Number(d.rain_min || 0);
+    if ((d.water ?? 0) > maxWater) maxWater = d.water;
+    statuses.push(d.status || "AMAN");
+  });
+
+  const status = worstStatus(statuses);
+
+  excelData.push({
+    Tanggal: date,
+    Total_Hujan_mm: Number(total.toFixed(1)),
+    Tinggi_Air_Tertinggi_cm: maxWater,
+    Status_Terburuk: status
+  });
+
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>${date}</td>
+    <td>${total.toFixed(1)}</td>
+    <td>${maxWater}</td>
+    <td>${status}</td>
+  `;
+  tbody.appendChild(tr);
+}
+
+/* ================= EXPORT EXCEL ================= */
+function exportExcel() {
+  if (excelData.length === 0) {
+    alert("Data kosong. Klik 'Tampilkan' dahulu.");
+    return;
+  }
+
+  const mode = document.getElementById("viewMode").value;
+  const ws = XLSX.utils.json_to_sheet(excelData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Rekap Banjir");
+  XLSX.writeFile(wb, "rekap_banjir_" + mode + ".xlsx");
+}
+</script>
+
+</body>
+</html>
